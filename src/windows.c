@@ -5,6 +5,7 @@
 #include "focus_recovery.h"
 #include "hashtable.h"
 #include "border.h"
+#include "close_observer.h"
 #include "misc/ax.h"
 #include <limits.h>
 #include <stdio.h>
@@ -676,6 +677,10 @@ static bool windows_window_focus(struct table* windows, uint32_t wid) {
   if (newly_focused) {
     windows_adaptive_schedule_border(target, ADAPTIVE_FOCUS_DEBOUNCE_MS);
   }
+
+  // Idempotent for an already watched window, so every confirmed resolution
+  // may retry a lookup that failed while the application was still settling.
+  close_observer_track(wid);
 
   return true;
 }

@@ -551,9 +551,10 @@ static bool border_refresh_space(struct border* border, bool retry_helpers) {
 
 bool border_update_internal(struct border* border, struct settings* settings) {
   // Every path that orders a helper in (updates, focus, Space recovery, yabai
-  // proxies) funnels through here, so this keeps Mission Control clean. The
-  // exit handler runs a full Space refresh to restore the borders.
-  if (g_mission_control_active) {
+  // proxies) funnels through here, so this keeps Mission Control and closing
+  // windows clean. Mission Control exit runs a full Space refresh and the
+  // close observer re-checks a closing window to restore the borders.
+  if (g_mission_control_active || border->closing) {
     border_hide(border);
     return false;
   }
@@ -846,6 +847,7 @@ void border_unhide(struct border* border) {
   struct settings* settings = border_get_settings(border);
   if (settings->border_style == BORDER_STYLE_NONE
       || g_mission_control_active
+      || border->closing
       || border->too_small
       || border->external_proxy_wid
       || (!border->sticky && !is_space_visible(border->cid, border->sid))) {

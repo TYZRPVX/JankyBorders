@@ -95,6 +95,9 @@ struct border {
   bool needs_redraw;
   bool too_small;
   bool sticky;
+  // Set when the application reports the window destroyed, which precedes
+  // the WindowServer close animation and the SkyLight close notifications.
+  bool closing;
 
   uint64_t sid;
   uint32_t wid;
