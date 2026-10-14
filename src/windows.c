@@ -603,6 +603,20 @@ void windows_update_inactive(struct table* windows) {
   }
 }
 
+void windows_hide_all(struct table* windows) {
+  for (int i = 0; i < windows->capacity; ++i) {
+    struct bucket* bucket = windows->buckets[i];
+    while (bucket) {
+      struct border* border = bucket->value;
+      if (border) {
+        border_hide(border);
+        if (border->proxy) border_hide(border->proxy);
+      }
+      bucket = bucket->next;
+    }
+  }
+}
+
 void windows_window_update(struct table* windows, uint32_t wid) {
   struct border* border = table_find(windows, &wid);
   if (border) border_update(border, true);

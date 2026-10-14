@@ -4,11 +4,14 @@
 #include "border.h"
 #include "focus_recovery.h"
 #include "misc/window.h"
+#include "mission_control.h"
 #include "space_recovery.h"
+#include <libproc.h>
 #include <string.h>
 
 extern struct table g_windows;
 extern pid_t g_pid;
+extern volatile bool g_mission_control_active;
 
 static volatile uint64_t focus_change_generation;
 static volatile bool space_transition_active;
@@ -32,6 +35,9 @@ static void events_restart_focus_refresh(void) {
 }
 
 static void events_schedule_focus_refresh(bool invalidate_fallback) {
+  // Mission Control exit starts a fresh Space refresh, which also resolves
+  // focus, so nothing is lost by not probing while the overview is shown.
+  if (g_mission_control_active) return;
   if (!focus_recovery_scheduler_schedule(&focus_refresh_scheduler)) {
     // The in-flight callbacks always read current WindowServer state, so a
     // burst must not postpone the already scheduled probe. Structural/order
@@ -109,6 +115,112 @@ static bool is_own_window(int cid, uint32_t wid) {
   return pid == g_pid;
 }
 
+// SkyLight notifications, probes and the poll below all run on the main
+// queue, so the backdrop state is serialized without a lock.
+static struct mission_control_state mission_control;
+
+static bool events_window_owned_by(int cid, uint32_t wid, const char* name) {
+  int wid_cid = 0;
+  pid_t pid = 0;
+  char owner[PROC_PIDPATHINFO_MAXSIZE];
+  return SLSGetWindowOwner(cid, wid, &wid_cid) == kCGErrorSuccess
+         && wid_cid
+         && SLSConnectionGetPID(wid_cid, &pid) == kCGErrorSuccess
+         && pid > 0
+         && proc_name(pid, owner, sizeof(owner)) > 0
+         && strcmp(owner, name) == 0;
+}
+
+static bool events_mission_control_is_backdrop(int cid, uint32_t wid) {
+  int64_t level = 0;
+  CGRect bounds;
+  if (SLSGetWindowLevel(cid, wid, &level) != kCGErrorSuccess
+      || SLSGetWindowBounds(cid, wid, &bounds) != kCGErrorSuccess) {
+    return false;
+  }
+
+  CGDirectDisplayID display_ids[MISSION_CONTROL_MAX_BACKDROPS];
+  uint32_t display_count = 0;
+  if (CGGetActiveDisplayList(MISSION_CONTROL_MAX_BACKDROPS,
+                             display_ids,
+                             &display_count) != kCGErrorSuccess) {
+    return false;
+  }
+  CGRect displays[MISSION_CONTROL_MAX_BACKDROPS];
+  for (uint32_t i = 0; i < display_count; ++i) {
+    displays[i] = CGDisplayBounds(display_ids[i]);
+  }
+
+  return mission_control_backdrop_matches(level,
+                                          bounds,
+                                          displays,
+                                          display_count);
+}
+
+static bool events_mission_control_backdrop_visible(uint32_t wid,
+                                                    void* context) {
+  int cid = (int)(intptr_t)context;
+  int wid_cid = 0;
+  bool shown = false;
+  return SLSGetWindowOwner(cid, wid, &wid_cid) == kCGErrorSuccess
+         && wid_cid
+         && SLSWindowIsOrderedIn(cid, wid, &shown) == kCGErrorSuccess
+         && shown;
+}
+
+static void events_mission_control_schedule_poll(int cid) {
+  // Destroy notifications also fire when a backdrop merely moves between
+  // Spaces, so the exit is decided by polling the tracked backdrops instead.
+  // The poll only runs while Mission Control is shown.
+  dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                               MISSION_CONTROL_POLL_INTERVAL_US
+                               * NSEC_PER_USEC),
+                 dispatch_get_main_queue(), ^{
+    if (!mission_control_poll(&mission_control,
+                              events_mission_control_backdrop_visible,
+                              (void*)(intptr_t)cid)) {
+      events_mission_control_schedule_poll(cid);
+      return;
+    }
+
+    debug("Mission Control Exit\n");
+    g_mission_control_active = false;
+    events_schedule_space_refresh();
+  });
+}
+
+static void events_mission_control_probe(int cid,
+                                         uint32_t wid,
+                                         size_t attempt) {
+  if (mission_control_tracks(&mission_control, wid)) return;
+
+  if (!events_mission_control_is_backdrop(cid, wid)) {
+    if (attempt >= MISSION_CONTROL_PROBE_COUNT) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,
+                                 mission_control_probe_delays_us[attempt]
+                                 * NSEC_PER_USEC),
+                   dispatch_get_main_queue(), ^{
+      events_mission_control_probe(cid, wid, attempt + 1);
+    });
+    return;
+  }
+
+  if (!mission_control_track(&mission_control, wid)) return;
+
+  debug("Mission Control Enter (backdrop %u)\n", wid);
+  g_mission_control_active = true;
+  events_cancel_focus_refresh();
+  windows_hide_all(&g_windows);
+  events_mission_control_schedule_poll(cid);
+}
+
+static void events_mission_control_observe(int cid, uint32_t wid) {
+  // Backdrops are created at level 0 and sized and raised only afterwards,
+  // so WindowManager windows are re-probed briefly after their creation.
+  if (!events_window_owned_by(cid, wid, MISSION_CONTROL_OWNER)) return;
+  events_mission_control_probe(cid, wid, 0);
+}
+
 static void window_spawn_handler(uint32_t event,
                                  void* data,
                                  size_t data_length,
@@ -128,6 +240,7 @@ static void window_spawn_handler(uint32_t event,
   if (!wid || !sid || is_own_window(cid, wid)) return;
 
   if (event == EVENT_WINDOW_CREATE) {
+    events_mission_control_observe(cid, wid);
     if (windows_window_create(windows, wid, sid)) {
       debug("Window Created: %d %d\n", wid, sid);
       events_schedule_space_refresh();
@@ -226,6 +339,7 @@ void events_schedule_space_refresh(void) {
               generation)) {
         return;
       }
+      if (g_mission_control_active) return;
       windows_refresh_after_space_change(
           &g_windows,
           i == SPACE_CHANGE_RETRY_COUNT - 1);

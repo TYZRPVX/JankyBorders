@@ -7,6 +7,7 @@
 #include <time.h>
 
 extern struct settings g_settings;
+extern volatile bool g_mission_control_active;
 
 static uint32_t border_interpolate_color(uint32_t first,
                                          uint32_t second,
@@ -549,6 +550,14 @@ static bool border_refresh_space(struct border* border, bool retry_helpers) {
 }
 
 bool border_update_internal(struct border* border, struct settings* settings) {
+  // Every path that orders a helper in (updates, focus, Space recovery, yabai
+  // proxies) funnels through here, so this keeps Mission Control clean. The
+  // exit handler runs a full Space refresh to restore the borders.
+  if (g_mission_control_active) {
+    border_hide(border);
+    return false;
+  }
+
   bool target_space_known = border_refresh_space(border, false);
   if (border->external_proxy_wid) return true;
   if (settings->border_style == BORDER_STYLE_NONE) {
@@ -836,6 +845,7 @@ void border_unhide(struct border* border) {
   (void)border_refresh_space(border, false);
   struct settings* settings = border_get_settings(border);
   if (settings->border_style == BORDER_STYLE_NONE
+      || g_mission_control_active
       || border->too_small
       || border->external_proxy_wid
       || (!border->sticky && !is_space_visible(border->cid, border->sid))) {
