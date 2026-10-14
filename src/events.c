@@ -94,10 +94,12 @@ static void event_watcher(uint32_t event, void* data, size_t data_length, void* 
 }
 #endif
 
-struct window_spawn_data {
-  uint64_t sid;
-  uint32_t wid;
-};
+// SkyLight sends the spawn payload packed as { uint64_t sid; uint32_t wid; },
+// which is 12 bytes. A C struct with those members is padded to 16 bytes, so
+// its sizeof would reject every real create and destroy notification.
+#define WINDOW_SPAWN_DATA_SID_OFFSET 0
+#define WINDOW_SPAWN_DATA_WID_OFFSET sizeof(uint64_t)
+#define WINDOW_SPAWN_DATA_SIZE (sizeof(uint64_t) + sizeof(uint32_t))
 
 static bool is_own_window(int cid, uint32_t wid) {
   int wid_cid = 0;
@@ -111,13 +113,17 @@ static void window_spawn_handler(uint32_t event,
                                  void* data,
                                  size_t data_length,
                                  int cid) {
-  if (!data || data_length < sizeof(struct window_spawn_data)) return;
+  if (!data || data_length < WINDOW_SPAWN_DATA_SIZE) return;
 
-  struct window_spawn_data spawn_data;
-  memcpy(&spawn_data, data, sizeof(spawn_data));
+  uint64_t sid = 0;
+  uint32_t wid = 0;
+  memcpy(&sid,
+         (const uint8_t*)data + WINDOW_SPAWN_DATA_SID_OFFSET,
+         sizeof(sid));
+  memcpy(&wid,
+         (const uint8_t*)data + WINDOW_SPAWN_DATA_WID_OFFSET,
+         sizeof(wid));
   struct table* windows = &g_windows;
-  uint32_t wid = spawn_data.wid;
-  uint64_t sid = spawn_data.sid;
 
   if (!wid || !sid || is_own_window(cid, wid)) return;
 
