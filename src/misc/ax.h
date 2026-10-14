@@ -5,6 +5,13 @@
 extern void _AXUIElementGetWindow(CFTypeRef window, uint32_t* wid);
 static bool g_ax_trust = false;
 
+// AX requests are answered by the target application's main thread. While an
+// application closes a window or presents a sheet it can stall them up to the
+// 6 s system default, blocking our main run loop and every queued close and
+// destroy notification behind it, so borders lingered after windows closed.
+// Fail fast instead; callers fall back to the SkyLight front-window resolver.
+#define AX_MESSAGING_TIMEOUT_S 0.1f
+
 static inline bool ax_check_trust(bool silent) {
   if (silent) return AXIsProcessTrusted();
   CFStringRef key =  kAXTrustedCheckOptionPrompt;
@@ -39,6 +46,7 @@ static inline uint32_t ax_get_front_window(int cid) {
 
   AXUIElementRef app = AXUIElementCreateApplication(pid);
   if (!app) return 0;
+  AXUIElementSetMessagingTimeout(app, AX_MESSAGING_TIMEOUT_S);
   CFTypeRef window = NULL;
   AXError copy_error = AXUIElementCopyAttributeValue(
       app,
@@ -50,6 +58,7 @@ static inline uint32_t ax_get_front_window(int cid) {
     return 0;
   }
   uint32_t wid = 0;
+  AXUIElementSetMessagingTimeout(window, AX_MESSAGING_TIMEOUT_S);
   _AXUIElementGetWindow(window, &wid);
   CFRelease(window);
   return wid;
