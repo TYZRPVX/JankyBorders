@@ -69,7 +69,7 @@ static void test_auto_insets_each_overflowing_edge(void) {
       BORDER_POSITION_AUTO);
 
   assert_rect(geometry.path_bounds, 14, 14, 96, 96);
-  assert_rect(geometry.clip_bounds, 16, 16, 92, 92);
+  assert_rect(geometry.clip_bounds, 14, 14, 96, 96);
   assert(geometry.inset_edges == (BORDER_INSET_LEFT
                                   | BORDER_INSET_RIGHT
                                   | BORDER_INSET_TOP
@@ -83,7 +83,7 @@ static void test_auto_insets_each_overflowing_edge(void) {
                                        BORDER_POSITION_AUTO);
   assert(geometry.inset_edges == BORDER_INSET_RIGHT);
   assert_rect(geometry.path_bounds, 12, 12, 87, 80);
-  assert_rect(geometry.clip_bounds, 13, 13, 84, 78);
+  assert_rect(geometry.clip_bounds, 12, 12, 87, 80);
 
   geometry = border_geometry_calculate(CGRectMake(1, 10, 80, 80),
                                        CGRectMake(0, 0, 100, 100),
@@ -98,6 +98,9 @@ static void test_auto_insets_each_overflowing_edge(void) {
                                        8,
                                        BORDER_POSITION_AUTO);
   assert(geometry.inset_edges == BORDER_INSET_TOP);
+  // Unflipped context: the screen top edge is the context MaxY edge.
+  assert_rect(geometry.path_bounds, 12, 12, 80, 78);
+  assert_rect(geometry.clip_bounds, 12, 12, 80, 78);
 
   geometry = border_geometry_calculate(CGRectMake(10, 19, 80, 80),
                                        CGRectMake(0, 0, 100, 100),
@@ -105,6 +108,8 @@ static void test_auto_insets_each_overflowing_edge(void) {
                                        8,
                                        BORDER_POSITION_AUTO);
   assert(geometry.inset_edges == BORDER_INSET_BOTTOM);
+  assert_rect(geometry.path_bounds, 12, 14, 80, 78);
+  assert_rect(geometry.clip_bounds, 12, 14, 80, 78);
 
   geometry = border_geometry_calculate(CGRectMake(2, 2, 96, 96),
                                        CGRectMake(0, 0, 100, 100),

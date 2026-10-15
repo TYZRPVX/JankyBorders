@@ -148,49 +148,42 @@ static inline struct border_geometry border_geometry_calculate(
                                        border_width);
     geometry.force_above = true;
   } else if (!CGRectIsNull(display_frame) && !CGRectIsEmpty(display_frame)) {
-    CGFloat left = 0.0;
-    CGFloat right = 0.0;
-    CGFloat top = 0.0;
-    CGFloat bottom = 0.0;
-    CGFloat clip_left = 1.0;
-    CGFloat clip_right = 1.0;
-    CGFloat clip_top = 1.0;
-    CGFloat clip_bottom = 1.0;
-
     if (CGRectGetMinX(window_frame) - half_width
         < CGRectGetMinX(display_frame)) {
       geometry.inset_edges |= BORDER_INSET_LEFT;
-      left = half_width;
-      clip_left = border_width;
     }
     if (CGRectGetMaxX(window_frame) + half_width
         > CGRectGetMaxX(display_frame)) {
       geometry.inset_edges |= BORDER_INSET_RIGHT;
-      right = half_width;
-      clip_right = border_width;
     }
     if (CGRectGetMinY(window_frame) - half_width
         < CGRectGetMinY(display_frame)) {
       geometry.inset_edges |= BORDER_INSET_TOP;
-      top = half_width;
-      clip_top = border_width;
     }
     if (CGRectGetMaxY(window_frame) + half_width
         > CGRectGetMaxY(display_frame)) {
       geometry.inset_edges |= BORDER_INSET_BOTTOM;
-      bottom = half_width;
-      clip_bottom = border_width;
     }
 
-    geometry.path_bounds = border_geometry_inset_edges(
-        geometry.drawing_bounds, left, right, top, bottom);
-    geometry.clip_bounds = border_geometry_inset_edges(
-        geometry.drawing_bounds,
-        clip_left,
-        clip_right,
-        clip_top,
-        clip_bottom);
-    geometry.force_above = geometry.inset_edges != 0;
+    if (geometry.inset_edges != 0) {
+      // Drawn above the window, so keep the visible width at half_width on
+      // every edge: outside edges clip at the window edge, inset edges show
+      // only the inner half of a stroke moved fully inside the window.
+      CGFloat left = geometry.inset_edges & BORDER_INSET_LEFT
+                     ? half_width : 0.0;
+      CGFloat right = geometry.inset_edges & BORDER_INSET_RIGHT
+                      ? half_width : 0.0;
+      CGFloat top = geometry.inset_edges & BORDER_INSET_TOP
+                    ? half_width : 0.0;
+      CGFloat bottom = geometry.inset_edges & BORDER_INSET_BOTTOM
+                       ? half_width : 0.0;
+
+      // The window context is unflipped: screen top maps to context MaxY.
+      geometry.path_bounds = border_geometry_inset_edges(
+          geometry.drawing_bounds, left, right, bottom, top);
+      geometry.clip_bounds = geometry.path_bounds;
+      geometry.force_above = true;
+    }
   }
 
   geometry.frame.origin = CGPointZero;
