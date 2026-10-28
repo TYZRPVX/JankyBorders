@@ -8,6 +8,7 @@
 #include "mach.h"
 #include "misc/helpers.h"
 #include "parse.h"
+#include "radius.h"
 
 bool g_blacklist_enabled = false;
 struct table g_blacklist;
@@ -448,7 +449,58 @@ static void test_hashtable_fail_closed(void) {
   table_free(&table);
 }
 
+static void test_radius_defaults_and_overrides(void) {
+  float fractional_radius = 11.5f;
+  CFNumberRef number = CFNumberCreate(NULL, kCFNumberFloatType,
+                                      &fractional_radius);
+  assert(number);
+  assert(border_radius_from_number(number) == 11.5f);
+  CFRelease(number);
+  assert(border_radius_from_number(NULL) == 0.0f);
+  assert(border_radius_from_number(CFSTR("16")) == 0.0f);
+  assert(border_radius_resolve(11.5f, false, 0, true) == 11.5f);
+  assert(border_radius_resolve(0, false, 0, true) == 16.0f);
+  assert(border_radius_resolve(NAN, false, 0, true) == 16.0f);
+  assert(border_radius_resolve(0, false, 0, false) == 9.0f);
+  assert(border_radius_resolve(16, true, 20.5f, true) == 20.5f);
+  assert(border_radius_resolve(16, true, 0, true) == 0.0f);
+
+  struct settings settings = { 0 };
+  char custom[] = "radius=20.5";
+  char* arguments[] = { custom };
+  assert(parse_settings(&settings, 1, arguments) == BORDER_UPDATE_MASK_ALL);
+  assert(settings.border_radius_override);
+  assert(settings.border_radius == 20.5f);
+
+  const char* invalid[] = { "radius=", "radius=-1", "radius=nan",
+                            "radius=inf", "radius=12px", "radius=1e9999" };
+  for (size_t i = 0; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+    char* argument = (char*)invalid[i];
+    assert(parse_settings(&settings, 1, &argument) == 0);
+    assert(settings.border_radius_override);
+    assert(settings.border_radius == 20.5f);
+  }
+
+  char zero[] = "radius=0";
+  arguments[0] = zero;
+  assert(parse_settings_override(&settings, 1, arguments)
+         == BORDER_UPDATE_MASK_ALL);
+  assert(settings.border_radius_override);
+  assert(settings.border_radius == 0.0f);
+
+  char automatic[] = "radius=auto";
+  arguments[0] = automatic;
+  assert(parse_settings(&settings, 1, arguments) == BORDER_UPDATE_MASK_ALL);
+  assert(!settings.border_radius_override);
+  assert(border_radius_resolve(11.5f, settings.border_radius_override,
+                               settings.border_radius, true) == 11.5f);
+  char target[] = "apply-to=4734";
+  char* targeted[] = { custom, target };
+  assert(parse_settings_scope_is_valid(2, targeted));
+}
+
 int main(void) {
+  test_radius_defaults_and_overrides();
   test_argument_codec();
   test_outer_mach_validation();
   test_invalid_mach_message_cleanup();

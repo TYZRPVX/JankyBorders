@@ -1,3 +1,4 @@
+#include "radius.h"
 #include "windows.h"
 #include "active_only.h"
 #include "adaptive_lifecycle.h"
@@ -493,23 +494,15 @@ static bool windows_window_create_internal(struct table* windows,
             window_created = true;
           }
 
-          int32_t radius = 0;
-
-          // Determine window corner radius
+          border->system_radius = 0.0f;
           if (JBSLSWindowIteratorGetCornerRadii) {
             CFArrayRef radii_ref = JBSLSWindowIteratorGetCornerRadii(iterator);
             if (radii_ref && CFArrayGetCount(radii_ref) > 0) {
-              CFNumberRef value = CFArrayGetValueAtIndex(radii_ref, 0);
-              if (value && CFGetTypeID(value) == CFNumberGetTypeID()) {
-                CFNumberGetValue(value, kCFNumberSInt32Type, &radius);
-              }
+              border->system_radius = border_radius_from_number(
+                  CFArrayGetValueAtIndex(radii_ref, 0));
             }
             if (radii_ref) CFRelease(radii_ref);
           }
-          radius = radius > 0 ? radius : 9;
-
-          border->radius = radius;
-          border->inner_radius = radius + 1;
           border->target_wid = wid;
           border->sid = sid;
           // Creation only prepares an unfocused helper. The central resolver

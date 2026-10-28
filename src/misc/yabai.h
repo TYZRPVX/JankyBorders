@@ -83,6 +83,7 @@ static struct border* yabai_proxy_create_candidate(struct border* border) {
   proxy->target_bounds = border->target_bounds;
   proxy->frame = border->frame;
   proxy->focused = border->focused;
+  proxy->system_radius = border->system_radius;
   proxy->radius = border->radius;
   proxy->inner_radius = border->inner_radius;
   window_send_to_space(proxy->cid, proxy->wid, proxy->sid);

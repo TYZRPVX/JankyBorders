@@ -98,6 +98,20 @@ Determines the width of the border.\& For example, width=5.\&0 creates a border
 5.\&0 points wide.\&
 .PP
 .RE
+\fBradius=<auto|float>\fR
+.RS 4
+Overrides the corner radius in points for \fIround\fR and \fIuniform\fR borders.
+Accepts a finite nonnegative number; radius=0 gives square corners.
+The default \fIauto\fR uses the system-reported radius, including fractional
+values. When the system reports zero or no usable radius, \fIauto\fR falls back
+to 16 points on macOS 27 and newer, or 9 points on earlier releases.
+The 16-point fallback is based on observed macOS 27 windows, and may need
+adjustment for custom-drawn application windows. Explicit numeric values
+also override the fixed 9-point path radius of \fIuniform\fR. Supports runtime
+updates and \fIapply-to=<window-id>\fR. Use radius=auto to restore automatic
+selection. For example: borders radius=20.5.
+.PP
+.RE
 \fBhidpi=<boolean>\fR
 .RS 4
 If set to \fIon\fR, the border will be drawn with retina resolution.\&

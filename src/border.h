@@ -63,6 +63,8 @@ struct settings {
   struct color_style background;
 
   float border_width;
+  float border_radius;
+  bool border_radius_override;
   float blur_radius;
   char border_style;
   enum border_position border_position;
@@ -103,6 +105,7 @@ struct border {
   uint32_t wid;
   uint32_t target_wid;
 
+  float system_radius;
   float radius;
   float inner_radius;
 

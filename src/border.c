@@ -1,3 +1,5 @@
+#include "rounded_path.h"
+#include "radius.h"
 #include "border.h"
 #include "hashtable.h"
 #include "misc/extern.h"
@@ -187,67 +189,6 @@ static bool border_calculate_bounds(struct border* border, CGRect* frame, struct
   return true;
 }
 
-static bool border_corner_radii_are_uniform(struct border_corner_radii radii) {
-  return radii.top_left == radii.top_right
-         && radii.top_left == radii.bottom_right
-         && radii.top_left == radii.bottom_left;
-}
-
-static bool border_add_rounded_rect(CGMutablePathRef path,
-                                    CGRect rect,
-                                    struct border_corner_radii radii) {
-  if (!path) return false;
-  if (border_corner_radii_are_uniform(radii)) {
-    CGPathAddRoundedRect(path,
-                         NULL,
-                         rect,
-                         radii.top_left,
-                         radii.top_left);
-    return true;
-  }
-
-  CGFloat min_x = CGRectGetMinX(rect);
-  CGFloat max_x = CGRectGetMaxX(rect);
-  CGFloat min_y = CGRectGetMinY(rect);
-  CGFloat max_y = CGRectGetMaxY(rect);
-
-  CGPathMoveToPoint(path, NULL, min_x + radii.top_left, min_y);
-  CGPathAddLineToPoint(path, NULL, max_x - radii.top_right, min_y);
-  CGPathAddArcToPoint(path,
-                      NULL,
-                      max_x,
-                      min_y,
-                      max_x,
-                      min_y + radii.top_right,
-                      radii.top_right);
-  CGPathAddLineToPoint(path, NULL, max_x, max_y - radii.bottom_right);
-  CGPathAddArcToPoint(path,
-                      NULL,
-                      max_x,
-                      max_y,
-                      max_x - radii.bottom_right,
-                      max_y,
-                      radii.bottom_right);
-  CGPathAddLineToPoint(path, NULL, min_x + radii.bottom_left, max_y);
-  CGPathAddArcToPoint(path,
-                      NULL,
-                      min_x,
-                      max_y,
-                      min_x,
-                      max_y - radii.bottom_left,
-                      radii.bottom_left);
-  CGPathAddLineToPoint(path, NULL, min_x, min_y + radii.top_left);
-  CGPathAddArcToPoint(path,
-                      NULL,
-                      min_x,
-                      min_y,
-                      min_x + radii.top_left,
-                      min_y,
-                      radii.top_left);
-  CGPathCloseSubpath(path);
-  return true;
-}
-
 static bool border_draw_gradient_glow(CGContextRef context,
                                       const struct gradient* gradient,
                                       CGPathRef path,
@@ -361,23 +302,14 @@ static bool border_draw(struct border* border,
   if (settings->border_style == BORDER_STYLE_SQUARE) {
     CGPathAddRect(inner_clip_path, NULL, border->clip_bounds);
   } else {
-    struct border_corner_radii clip_radii;
-    if (settings->border_position == BORDER_POSITION_AUTO
-        && border->inset_edges == 0) {
-      clip_radii = (struct border_corner_radii) {
-        border->inner_radius,
-        border->inner_radius,
-        border->inner_radius,
-        border->inner_radius,
-      };
-    } else {
-      clip_radii = border_geometry_corner_radii(border->drawing_bounds,
-                                                border->clip_bounds,
-                                                border->radius);
-    }
+    struct border_corner_radii clip_radii = border_geometry_corner_radii(
+        border->drawing_bounds,
+        border->clip_bounds,
+        border->radius);
     if (!border_add_rounded_rect(inner_clip_path,
                                  border->clip_bounds,
-                                 clip_radii)) {
+                                 clip_radii,
+                                 settings->border_style == BORDER_STYLE_ROUND)) {
       goto draw_failed;
     }
   }
@@ -390,6 +322,7 @@ static bool border_draw(struct border* border,
   bool square = settings->border_style == BORDER_STYLE_SQUARE;
   float inset = -settings->border_width / 2.f;
   float corner_radius = settings->border_style == BORDER_STYLE_ROUND_UNIFORM
+                        && !settings->border_radius_override
                         ? 9.0
                         : border->radius;
 
@@ -401,7 +334,10 @@ static bool border_draw(struct border* border,
         path_rect,
         corner_radius);
     CGMutablePathRef rounded_path = CGPathCreateMutable();
-    if (!border_add_rounded_rect(rounded_path, path_rect, path_radii)) {
+    if (!border_add_rounded_rect(rounded_path,
+                                 path_rect,
+                                 path_radii,
+                                 settings->border_style == BORDER_STYLE_ROUND)) {
       if (rounded_path) CFRelease(rounded_path);
       goto draw_failed;
     }
@@ -565,6 +501,16 @@ bool border_update_internal(struct border* border, struct settings* settings) {
     border_hide(border);
     return false;
   }
+
+  bool macos_27_or_newer = false;
+  if (__builtin_available(macOS 27.0, *)) macos_27_or_newer = true;
+  float radius = border_radius_resolve(border->system_radius,
+                                       settings->border_radius_override,
+                                       settings->border_radius,
+                                       macos_27_or_newer);
+  if (border->radius != radius) border->needs_redraw = true;
+  border->radius = radius;
+  border->inner_radius = radius + 1.0f;
 
   int cid = border->cid;
   bool update_succeeded = false;

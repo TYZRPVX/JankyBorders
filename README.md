@@ -149,6 +149,7 @@ absolute path; place the file at `$XDG_CONFIG_HOME/borders/bordersrc`.
 options=(
 	style=round
 	width=6.0
+	radius=auto
 	hidpi=off
 	active_only=off
 	adaptive_color=off
@@ -158,6 +159,13 @@ options=(
 
 borders "${options[@]}"
 ```
+
+`radius=auto` uses the system corner radius and preserves fractional values.
+For windows reporting zero or no usable radius, the fallback is 16 points on
+macOS 27 and newer, or 9 points on earlier versions. Override it with
+`radius=20.5` (or `radius=0` for square corners), including at runtime with
+`borders radius=20.5`. Use `borders radius=auto` to restore automatic selection.
+An override can target an existing window with `apply-to=<window-id>`.
 
 #### Adapting the focused border to window-edge colors
 

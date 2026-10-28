@@ -30,14 +30,17 @@ static bool parse_u32_argument(const char* argument,
   return true;
 }
 
-static bool parse_width_argument(const char* argument, float* width) {
-  static const char prefix[] = "width=";
-  if (!argument || !width
-      || strncmp(argument, prefix, sizeof(prefix) - 1) != 0) {
+static bool parse_float_argument(const char* argument,
+                                  const char* prefix,
+                                  float* value,
+                                  bool allow_zero) {
+  size_t prefix_length = strlen(prefix);
+  if (!argument || !value
+      || strncmp(argument, prefix, prefix_length) != 0) {
     return false;
   }
 
-  const char* number = argument + sizeof(prefix) - 1;
+  const char* number = argument + prefix_length;
   if (*number == '\0') return false;
 
   errno = 0;
@@ -48,11 +51,11 @@ static bool parse_width_argument(const char* argument, float* width) {
       || !end
       || *end != '\0'
       || !isfinite(parsed)
-      || parsed <= 0.0f) {
+      || (allow_zero ? parsed < 0.0f : parsed <= 0.0f)) {
     return false;
   }
 
-  *width = parsed;
+  *value = parsed;
   return true;
 }
 
@@ -370,8 +373,21 @@ static uint32_t parse_settings_internal(struct settings* settings,
         }
       }
     }
-    else if (parse_width_argument(arguments[i], &settings->border_width)) {
+    else if (parse_float_argument(arguments[i], "width=",
+                                  &settings->border_width, false)) {
       update_mask |= BORDER_UPDATE_MASK_ALL;
+    }
+    else if (str_starts_with(arguments[i], "radius=")) {
+      if (strcmp(arguments[i], "radius=auto") == 0) {
+        settings->border_radius_override = false;
+        update_mask |= BORDER_UPDATE_MASK_ALL;
+      } else if (parse_float_argument(arguments[i], "radius=",
+                                       &settings->border_radius, true)) {
+        settings->border_radius_override = true;
+        update_mask |= BORDER_UPDATE_MASK_ALL;
+      } else {
+        printf("[?] Borders: Invalid argument '%s'\n", arguments[i]);
+      }
     }
     else if (parse_order_argument(arguments[i], &settings->border_order)) {
       update_mask |= BORDER_UPDATE_MASK_ALL;

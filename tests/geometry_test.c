@@ -1,7 +1,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
-#include "../src/geometry.h"
+#include "../src/rounded_path.h"
 
 static bool close_enough(CGFloat a, CGFloat b) {
   return fabs(a - b) < 0.001;
@@ -168,7 +168,56 @@ static void test_corner_radii_follow_each_inset_edge(void) {
   assert(close_enough(radii.bottom_right, 6));
 }
 
+static void test_auto_clip_preserves_corner_center(void) {
+  struct border_geometry geometry = border_geometry_calculate(
+      CGRectMake(10, 10, 100, 100), CGRectNull, 3, 8,
+      BORDER_POSITION_AUTO);
+  struct border_corner_radii clip = border_geometry_corner_radii(
+      geometry.drawing_bounds, geometry.clip_bounds, 16);
+  assert(close_enough(clip.top_left, 15));
+  assert(close_enough(CGRectGetMinX(geometry.clip_bounds) + clip.top_left,
+                      CGRectGetMinX(geometry.drawing_bounds) + 16));
+  assert(close_enough(CGRectGetMaxY(geometry.clip_bounds) - clip.bottom_right,
+                      CGRectGetMaxY(geometry.drawing_bounds) - 16));
+}
+
+static void test_continuous_path_and_circular_fallback(void) {
+  CGRect rect = CGRectMake(0, 0, 100, 100);
+  struct border_corner_radii radii = { 16, 16, 16, 16 };
+  CGMutablePathRef circular = CGPathCreateMutable();
+  CGMutablePathRef continuous = CGPathCreateMutable();
+  assert(circular && continuous);
+  assert(border_add_rounded_rect(circular, rect, radii, false));
+  assert(border_add_rounded_rect(continuous, rect, radii, true));
+  assert(CGRectEqualToRect(CGPathGetPathBoundingBox(continuous), rect));
+  assert(CGPathContainsPoint(continuous, NULL, CGPointMake(50, 50), false));
+  assert(!CGPathContainsPoint(continuous, NULL, CGPointZero, false));
+  if (border_create_continuous_path) {
+    // A continuous corner has a longer transition into the straight edge.
+    // These points are inside a circular corner but outside the native curve.
+    CGPoint points[] = { {16, 0.1}, {84, 0.1}, {16, 99.9}, {84, 99.9} };
+    for (size_t i = 0; i < sizeof(points) / sizeof(points[0]); ++i) {
+      assert(CGPathContainsPoint(circular, NULL, points[i], false));
+      assert(!CGPathContainsPoint(continuous, NULL, points[i], false));
+    }
+  } else {
+    assert(CGPathEqualToPath(circular, continuous));
+  }
+
+  border_continuous_path_fn saved = border_create_continuous_path;
+  border_create_continuous_path = NULL;
+  CGMutablePathRef fallback = CGPathCreateMutable();
+  assert(border_add_rounded_rect(fallback, rect, radii, true));
+  assert(CGPathEqualToPath(circular, fallback));
+  border_create_continuous_path = saved;
+  CGPathRelease(fallback);
+  CGPathRelease(continuous);
+  CGPathRelease(circular);
+}
+
 int main(void) {
+  test_auto_clip_preserves_corner_center();
+  test_continuous_path_and_circular_fallback();
   test_position_parser_is_exact();
   test_selects_display_with_largest_intersection();
   test_auto_preserves_legacy_geometry_away_from_edges();

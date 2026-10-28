@@ -77,6 +77,18 @@ verification boundary.
 	Determines the width of the border. For example, width=5.0 creates a border
 	5.0 points wide.
 
+*radius=<auto|float>*
+	Overrides the corner radius in points for _round_ and _uniform_ borders.
+	Accepts a finite nonnegative number; radius=0 gives square corners.
+	The default _auto_ uses the system-reported radius, including fractional
+	values. When the system reports zero or no usable radius, _auto_ falls back
+	to 16 points on macOS 27 and newer, or 9 points on earlier releases.
+	The 16-point fallback is based on observed macOS 27 windows, and may need
+	adjustment for custom-drawn application windows. Explicit numeric values
+	also override the fixed 9-point path radius of _uniform_. Supports runtime
+	updates and _apply-to=<window-id>_. Use radius=auto to restore automatic
+	selection. For example: borders radius=20.5.
+
 *hidpi=<boolean>*
 	If set to _on_, the border will be drawn with retina resolution.
 
