@@ -77,6 +77,16 @@ verification boundary.
 	Determines the width of the border. For example, width=5.0 creates a border
 	5.0 points wide.
 
+*min_width=<float>*, *min_height=<float>*
+	Global minimum window dimensions in macOS points. A window is excluded if
+	either dimension is below its threshold; equality is allowed. Each option
+	accepts a finite nonnegative number and defaults to 0 (disabled).
+	For example: borders min_width=600 min_height=400.
+	A focused small window keeps the previous eligible same-process window's
+	border, or the frontmost visible document window's border. If none qualifies,
+	the focus border is hidden. Resize and runtime setting changes update the
+	filter, including with active_only=on. Cannot be combined with apply-to.
+
 *radius=<auto|float>*
 	Overrides the corner radius in points for _round_ and _uniform_ borders.
 	Accepts a finite nonnegative number; radius=0 gives square corners.

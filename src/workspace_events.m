@@ -31,6 +31,11 @@ void workspace_events_register(void) {
              selector:@selector(applicationDidActivate:)
                  name:NSWorkspaceDidActivateApplicationNotification
                object:nil];
+      [[[NSWorkspace sharedWorkspace] notificationCenter]
+          addObserver:observer
+             selector:@selector(applicationDidActivate:)
+                 name:NSWorkspaceDidTerminateApplicationNotification
+               object:nil];
     }
   });
 }

@@ -377,6 +377,21 @@ static uint32_t parse_settings_internal(struct settings* settings,
                                   &settings->border_width, false)) {
       update_mask |= BORDER_UPDATE_MASK_ALL;
     }
+    else if (str_starts_with(arguments[i], "min_width=")
+             || str_starts_with(arguments[i], "min_height=")) {
+      if (global_controls) {
+        bool width = str_starts_with(arguments[i], "min_width=");
+        float value;
+        if (parse_float_argument(arguments[i], width ? "min_width=" : "min_height=",
+                                  &value, true)) {
+          if (width) settings->min_width = value;
+          else settings->min_height = value;
+          update_mask |= BORDER_UPDATE_MASK_ALL | BORDER_UPDATE_MASK_SIZE;
+        } else {
+          printf("[?] Borders: Invalid argument '%s'\n", arguments[i]);
+        }
+      }
+    }
     else if (str_starts_with(arguments[i], "radius=")) {
       if (strcmp(arguments[i], "radius=auto") == 0) {
         settings->border_radius_override = false;
@@ -498,6 +513,8 @@ bool parse_settings_contains_global_control(int count, char** arguments) {
   for (int i = 0; i < count; ++i) {
     bool enabled = false;
     if (active_only_parse_argument(arguments[i], &enabled)) return true;
+    if (str_starts_with(arguments[i], "min_width=")
+        || str_starts_with(arguments[i], "min_height=")) return true;
     if (arguments[i]
         && str_starts_with(arguments[i], "adaptive_color=")) return true;
   }

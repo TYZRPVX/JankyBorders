@@ -92,17 +92,24 @@ static void close_observer_callback(AXObserverRef observer,
 
 static AXUIElementRef close_observer_copy_window(AXUIElementRef app,
                                                  uint32_t wid) {
+  CFAbsoluteTime deadline = CFAbsoluteTimeGetCurrent() + AX_MESSAGING_TIMEOUT_S;
   CFTypeRef focused = NULL;
   if (AXUIElementCopyAttributeValue(app,
                                     kAXFocusedWindowAttribute,
                                     &focused) == kAXErrorSuccess
       && focused) {
+    if (CFGetTypeID(focused) != AXUIElementGetTypeID()) {
+      CFRelease(focused);
+      return NULL;
+    }
+    AXUIElementSetMessagingTimeout((AXUIElementRef)focused, AX_MESSAGING_TIMEOUT_S);
     uint32_t focused_wid = 0;
     _AXUIElementGetWindow(focused, &focused_wid);
     if (focused_wid == wid) return (AXUIElementRef)focused;
     CFRelease(focused);
   }
 
+  if (CFAbsoluteTimeGetCurrent() >= deadline) return NULL;
   CFTypeRef windows = NULL;
   if (AXUIElementCopyAttributeValue(app,
                                     kAXWindowsAttribute,
@@ -114,8 +121,11 @@ static AXUIElementRef close_observer_copy_window(AXUIElementRef app,
   AXUIElementRef match = NULL;
   if (CFGetTypeID(windows) == CFArrayGetTypeID()) {
     CFIndex count = CFArrayGetCount(windows);
-    for (CFIndex i = 0; i < count && !match; ++i) {
+    for (CFIndex i = 0; i < count && !match
+         && CFAbsoluteTimeGetCurrent() < deadline; ++i) {
       CFTypeRef candidate = CFArrayGetValueAtIndex(windows, i);
+      if (CFGetTypeID(candidate) != AXUIElementGetTypeID()) continue;
+      AXUIElementSetMessagingTimeout((AXUIElementRef)candidate, AX_MESSAGING_TIMEOUT_S);
       uint32_t candidate_wid = 0;
       _AXUIElementGetWindow(candidate, &candidate_wid);
       if (candidate_wid == wid) match = (AXUIElementRef)CFRetain(candidate);
@@ -128,7 +138,16 @@ static AXUIElementRef close_observer_copy_window(AXUIElementRef app,
 void close_observer_track(uint32_t wid) {
   if (wid && wid == close_observer.wid) return;
   close_observer_unwatch_window();
-  if (!wid || !AXIsProcessTrusted()) return;
+  if (!wid) return;
+  static bool reported_untrusted;
+  if (!AXIsProcessTrusted()) {
+    if (!reported_untrusted) {
+      fprintf(stderr, "Borders: early window-close observation is unavailable: Accessibility permission is not granted to this process.\n");
+      reported_untrusted = true;
+    }
+    return;
+  }
+  reported_untrusted = false;
 
   int cid = SLSMainConnectionID();
   int wid_cid = 0;

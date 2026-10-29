@@ -1,93 +1,282 @@
 # JankyBorders
 
-<img align="right" width="50%" src="images/screenshot.png" alt="Screenshot">
+A lightweight window border tool for macOS, forked from
+[FelixKratz/JankyBorders](https://github.com/FelixKratz/JankyBorders).
+This fork focuses on reliable focus borders across displays and Spaces, local
+service installation, adaptive colors, and configurable window corners.
 
-*JankyBorders* is a lightweight tool designed to add colored borders to
-user windows on macOS 14.0+. It enhances the user experience by visually
-highlighting the currently focused window without relying on the accessibility
-API, thereby being faster than comparable tools.
+![Window border example](images/screenshot.png)
 
-The upstream project targets macOS 14.0 and newer. Changes in this fork are
-validated on macOS 26.5.2; earlier releases are outside this fork's current
-verification boundary.
+## What this fork adds
 
-## Usage
-### Install
-The binary can be made available by installing it through Homebrew:
+Recent changes include:
+
+- **Configurable corners:** `radius=auto` or a numeric radius, fractional system
+  radii, and a 16-point fallback on macOS 27 when a window reports no usable
+  radius. Rounded borders use the system continuous-corner path on macOS 26+
+  when available and all four radii are equal.
+- **Focus and window lifecycle fixes:** restore borders across displays and
+  Spaces, hide them during Mission Control, remove them when a window starts
+  closing, and bound Accessibility queries to avoid stalled updates.
+- **Consistent placement:** `position=auto|inside|center|outside`, including
+  adjustments for edges that would otherwise be clipped by a display boundary.
+- **Focused-window mode:** `active_only=on` keeps only the focused window's
+  border, reducing the number of backing surfaces.
+- **Adaptive colors:** choose contrast colors per edge or one consistent color
+  for the entire focused border.
+- **Local service management:** build and install a signed, versioned app with
+  update, restart, and rollback commands.
+
+The upstream deployment target is macOS 14+. This fork has a documented
+verification baseline on macOS 26.5.2 and subsequent local validation on
+macOS 27.0.1. This is not a guarantee of compatibility with every release or
+application: rendering and window tracking use private macOS APIs.
+
+## Install this fork
+
+Build from this checkout to get the features described here. The upstream
+Homebrew package does not install this fork.
+
+You need macOS and the Xcode Command Line Tools (`clang` and `make`).
+
 ```bash
-brew tap FelixKratz/formulae
-brew install borders
-```
-
-#### Install this fork as a user service
-
-The local service is packaged as a versioned `JankyBorders.app`. To install the
-current checkout instead of the upstream Homebrew build, use:
-
-```bash
+git clone https://github.com/TYZRPVX/JankyBorders.git
+cd JankyBorders
 make install-service
 ```
 
-If the installer reports that the Homebrew service is running, stop it once
-with `brew services stop borders`, then run `make install-service` again.
+The installer builds the source, creates a signed `JankyBorders.app`, and
+starts a per-user LaunchAgent. The installation uses:
 
-On the first installation, this automatically creates one stable,
-local-only code-signing identity in your login keychain. macOS may prompt you
-to unlock the keychain and approve a user-level trust setting limited to code
-signing; no Keychain Access wizard is required. The identity lets macOS
-associate screen-recording permission with the same application across updates
-and rollbacks. It is not a Developer ID and is not suitable for distributing
-the app to other Macs.
+| Item | Location |
+| --- | --- |
+| Versioned app and rollback versions | `~/.local/opt/jankyborders` |
+| Command | `~/.local/bin/borders` |
+| Man page | `~/.local/share/man/man1/borders.1` |
+| LaunchAgent label | `io.github.qeesung.jankyborders.local` |
+| Logs | `~/Library/Logs/JankyBorders` |
 
-Run `make setup-signing` if you want to prepare the identity without installing
-the service. `make signing-help` documents the optional manual path. Automatic
-setup never changes system/admin trust, never grants every application private
-key access, never writes the generated private key to a regular file, and
-refuses to overwrite an existing item with the same name.
+Put `~/.local/bin` on your shell's `PATH` before other locations containing
+`borders`. Check which command your shell uses with `command -v borders`.
+The managed service supplies its own `PATH` with this directory first.
 
-This builds the current source, installs the signed and versioned app below
-`$HOME/.local/opt/jankyborders`, updates `$HOME/.local/bin/borders`, and starts
-the user LaunchAgent `io.github.qeesung.jankyborders.local`. It does not modify
-the Homebrew Cellar, so the Homebrew build remains available as a rollback.
+Use one startup mechanism. Before installing, stop an existing Homebrew service
+with `brew services stop borders`, or stop a manually launched instance and
+remove its startup entry from `yabairc` or `aerospace.toml`. The installer
+refuses conflicting processes and unmanaged files at its installation paths.
+If you previously copied a binary to `~/.local/bin/borders`, back it up and
+move it out of that path before migrating to the managed service.
 
-The service starts `borders` without arguments so that the normal
-`bordersrc` lookup described below still applies. Its `PATH` puts
-`$HOME/.local/bin` first, which also ensures that a `borders` command inside
-the configuration file talks to this fork.
+On first installation, signing setup creates a stable local code-signing
+identity in your login keychain. macOS may ask you to unlock the keychain and
+approve code-signing trust. This identity lets compatible service updates and
+rollbacks retain the same application identity for screen-recording permission.
+It is local to this Mac, not a Developer ID for distributing builds.
+Use `make signing-status` to inspect it, or `make signing-help` for manual setup.
 
-Use exactly one primary startup mechanism. While this LaunchAgent is installed,
-do not also start `borders` from `yabairc`, `aerospace.toml`, or
-`brew services`; competing instances share the same command port and can make
-the service restart repeatedly. Put appearance options in `bordersrc` instead.
+### Build and run without a service
 
-After pulling or changing the source, rebuild and atomically switch the local
-installation with:
+For a foreground development run:
 
 ```bash
-make update-service
+make
+PATH="$PWD/bin:$PATH" ./bin/borders
 ```
 
-Service lifecycle commands are:
+Stop it with `Ctrl-C`. If another instance is already running, invoking
+`borders` sends settings to that instance instead of starting another daemon.
+When a configuration script calls `borders`, ensure its `PATH` resolves to the
+build you intend to use.
+
+## Configure borders
+
+When started without arguments, Borders executes the first configuration file
+found in this order:
+
+1. `$XDG_CONFIG_HOME/borders/bordersrc`, when `XDG_CONFIG_HOME` is absolute.
+2. `$HOME/.config/borders/bordersrc`.
+3. `$HOME/.bordersrc`, the legacy location.
+
+A relative `XDG_CONFIG_HOME` is ignored. The managed service starts without
+arguments, so it follows this lookup order. A configuration file is a shell
+script, not a list of key-value pairs. For example, save this as
+`~/.config/borders/bordersrc`:
 
 ```bash
-make service-status
-make service-stop
-make service-start
+#!/usr/bin/env bash
+
+options=(
+    style=round
+    width=3.0
+    radius=auto
+    position=auto
+    hidpi=on
+    active_only=on
+    order=below
+    adaptive_color=off
+    active_color=0xcc0088ff
+    inactive_color=0x00000000
+)
+
+borders "${options[@]}"
+```
+
+This example draws a thin blue accent around the focused window. These are
+example settings; they are not all built-in defaults.
+
+### Common options
+
+| Option | Built-in default | Behavior |
+| --- | --- | --- |
+| `style` | `round` | `round`, `square`, `uniform`, or `none`; `none` hides borders without stopping the process. |
+| `width` | `4.0` | Positive stroke width in points. Visible width also depends on placement and window stacking. |
+| `radius` | `auto` | System corner radius, or an explicit nonnegative number in points. |
+| `position` | `auto` | `inside`, `center`, `outside`, or automatic adjustment at display edges. |
+| `order` | `below` | Place the border below or above its target window. Inside placement and automatic edge insets can force it above. |
+| `hidpi` | `off` | Render at Retina resolution when `on`. |
+| `active_only` | `off` | Keep a border only for the focused window when `on`. |
+| `adaptive_color` | `off` | `off`, `active`, or `focus`; see below. |
+| `active_color` | `0xffe1e3e4` | Focused border color in `0xAARRGGBB` format. |
+| `inactive_color` | `0x00000000` | Unfocused border color; has no visible effect with `active_only=on`. |
+
+Use `blacklist="App One,App Two"` to exclude applications, or
+`whitelist="App One,App Two"` to restrict borders to the named applications.
+Colors also support per-edge values, gradients, and glow. See the
+[full option reference](docs/borders.1.scd) for syntax and additional settings.
+
+### Hide small windows
+
+Set global minimum window dimensions in macOS points (independent of Retina
+scaling), for example in the `options` array in `bordersrc`:
+
+```bash
+min_width=600
+min_height=400
+```
+
+A window is excluded when **either** width or height is below its threshold.
+Equality is allowed. Both options default to `0`, which disables that axis.
+Use `borders min_width=600 min_height=400` to update a running instance.
+These options cannot be combined with `apply-to`.
+
+When a small window receives focus, Borders retains the previous eligible
+window of the same process, or selects its frontmost visible document window.
+If none qualifies, the focus border is hidden. Resizing across a threshold
+updates visibility even with `active_only=on`. These are size rules, so small
+terminals and documents are excluded too; they do not identify popup types.
+
+### Corner radius and custom windows
+
+With `radius=auto`, a positive system radius takes priority, including values
+such as `11.5`. If the system returns zero or no usable radius, the fallback is:
+
+| macOS version | Fallback radius |
+| --- | --- |
+| 27 and newer | 16 points |
+| Earlier versions | 9 points |
+
+The 16-point value is based on ordinary windows observed on macOS 27. It is
+not a universal measurement of application-drawn corners. Some apps, such as
+Wispr Flow, can draw visibly rounded content while reporting a system radius
+of zero. The fallback may improve their borders, but cannot recover their
+actual visible contour.
+
+Override the radius to tune these windows:
+
+```bash
+borders radius=20.5
+borders radius=auto
+```
+
+A numeric radius overrides system detection for `round` and `uniform` borders;
+`radius=0` gives square corners. `style=square` remains square regardless of
+radius. With automatic radius selection, `uniform` retains its fixed 9-point
+stroke-path radius. Nonuniform corner geometry and unavailable continuous-path
+support retain circular-arc rendering.
+
+For a single tracked window, replace `12345` with its window ID:
+
+```bash
+borders apply-to=12345 radius=20.5
+```
+
+This is a runtime window override, not a persistent application rule. It can
+be lost when a border is recreated, including when `active_only=on` removes
+an unfocused window's border.
+
+### Runtime changes
+
+While Borders is running, subsequent commands update it immediately:
+
+```bash
+borders width=5.0 active_color=0xffe5484d
+borders style=none
+borders style=round
+```
+
+To keep changes across restarts, put them in `bordersrc`. You can apply an
+updated configuration by running the script with Bash, for example
+`bash ~/.config/borders/bordersrc`.
+
+## Adaptive colors
+
+Adaptive colors are optional and require macOS screen-recording permission.
+Fixed colors do not need that permission.
+
+| Mode | Focused border behavior |
+| --- | --- |
+| `off` | Use `active_color`. |
+| `active` | Independently choose black or white for each edge based on nearby pixels. |
+| `focus` | Choose one color for the whole border: red (`0xffe5484d`) on bright content, or pale gray (`0xffe1e3e4`) on dark content. |
+
+For example:
+
+```bash
+borders adaptive_color=focus active_color=0xffe5484d width=5.0
+```
+
+Sampling runs after focus, window creation or unhide, resize, and Space
+recovery events. Scrolling and video playback alone do not trigger sampling.
+In `focus` mode, color changes require confirmation to limit flicker, and
+failed samples retain an established color. Before a usable sample, or after
+permission is lost, the border uses the configured `active_color` fallback.
+Inactive borders continue to use `inactive_color`.
+
+For the managed service, install the app first, then use:
+
+```bash
+make screen-capture-status
+make request-screen-capture
+# Grant access in System Settings, then:
 make service-restart
-make rollback-service
-make uninstall-service
 ```
 
-`rollback-service` swaps the `current` and `previous` version links and restarts
-the service when a compatible previous service installation exists. A first
-install or migration from an older local layout may not have a rollback target
-until the next successful update. `service-stop` disables the LaunchAgent until
-`service-start` or a new install, including across login sessions.
+These permission commands launch the installed, stably signed app through
+LaunchServices. The service does not request screen-recording permission at
+login. `adaptive_color` is process-wide and cannot be combined with `apply-to`.
+Accessibility permission is separate: it is optional for core rendering and
+can enable Accessibility-based focus resolution through `ax_focus`.
 
-`uninstall-service` removes the LaunchAgent and the managed command/man-page
-links but preserves versioned files under `$HOME/.local/opt/jankyborders` for
-manual inspection. Logs are written to `$HOME/Library/Logs/JankyBorders`. To
-return to the Homebrew service, run:
+## Update and manage the service
+
+Run these commands from the source checkout:
+
+| Command | Action |
+| --- | --- |
+| `make update-service` | Rebuild this checkout, install the new version, and restart. |
+| `make service-status` | Show the installed version and service status. |
+| `make service-stop` | Stop and disable the LaunchAgent, including across logins. |
+| `make service-start` | Enable and start the installed service. |
+| `make service-restart` | Restart the installed service. |
+| `make rollback-service` | Swap compatible `current` and `previous` versions and restart. |
+| `make uninstall-service` | Remove the LaunchAgent and managed command/man-page links. |
+
+Rollback requires a compatible previous managed version. A first install or
+migration may have no rollback target until the next successful update.
+Uninstalling preserves versioned files under `~/.local/opt/jankyborders`.
+
+The installer leaves Homebrew's Cellar untouched. To return to an existing
+upstream Homebrew installation:
 
 ```bash
 make uninstall-service
@@ -95,130 +284,32 @@ hash -r
 brew services start borders
 ```
 
-For a comprehensive overview of all available options and commands, consult the
-man page: `man borders`. A rendered version of the man page is available in the
-[Wiki](https://github.com/FelixKratz/JankyBorders/wiki/Man-Page).
+## Troubleshooting
 
-### Bootstrap with yabai
-For example, if you are using `yabai`, you could add:
-```bash
-borders active_color=0xffe1e3e4 inactive_color=0xff494d64 width=5.0 &
-```
-to the very end of your `yabairc`. This will start the borders with the
-specified options along with yabai.
+| Symptom | Check |
+| --- | --- |
+| New options are rejected or changes seem absent | Run `command -v borders`; confirm it points to the intended build. Use `make service-status` for a managed installation. |
+| Service repeatedly restarts | Check for another startup entry in Homebrew, yabai, or AeroSpace. Run one primary instance. |
+| Only one app has mismatched corners | Its visible content may differ from the reported window shape. Try a runtime `radius` override or exclude it with `blacklist`. |
+| Border is blurry on a Retina display | Set `hidpi=on`. |
+| Adaptive colors stay at the fallback | Check screen-recording permission for the installed app, then restart it. Sampling is event-driven. |
 
-### Bootstrap with AeroSpace
-You could add:
-```toml
-after-startup-command = [
-  'exec-and-forget borders active_color=0xffe1e3e4 inactive_color=0xff494d64 width=5.0'
-]
-```
-to your `aerospace.toml`. This will start borders with the specified options
-along with AeroSpace.
-
-### Bootstrap with brew
-If you want to run this as a separate service, you could use:
-```bash
-brew services start borders
-```
-
-### Configuring the appearance
-You can either configure the appearance directly when starting the borders
-process (as shown in "Bootstrap with yabai") or use a configuration file.
-The appearance can be adapted at any point in time.
-
-#### Using a configuration file (Optional)
-If the primary `borders` process is started without any arguments (or launched
-as a service by brew), it searches for and executes the first existing file in
-this order:
-
-1. `$XDG_CONFIG_HOME/borders/bordersrc` when `XDG_CONFIG_HOME` is absolute
-2. `$HOME/.config/borders/bordersrc`
-3. `$HOME/.bordersrc` (legacy fallback)
-
-A relative `XDG_CONFIG_HOME` is ignored, as required by the XDG Base Directory
-specification.
-
-An example configuration file could be placed at
-`$HOME/.config/borders/bordersrc`. If `XDG_CONFIG_HOME` is set, it must be an
-absolute path; place the file at `$XDG_CONFIG_HOME/borders/bordersrc`.
-```bash
-#!/bin/bash
-
-options=(
-	style=round
-	width=6.0
-	radius=auto
-	hidpi=off
-	active_only=off
-	adaptive_color=off
-	active_color=0xffe2e2e3
-	inactive_color=0xff414550
-)
-
-borders "${options[@]}"
-```
-
-`radius=auto` uses the system corner radius and preserves fractional values.
-For windows reporting zero or no usable radius, the fallback is 16 points on
-macOS 27 and newer, or 9 points on earlier versions. Override it with
-`radius=20.5` (or `radius=0` for square corners), including at runtime with
-`borders radius=20.5`. Use `borders radius=auto` to restore automatic selection.
-An override can target an existing window with `apply-to=<window-id>`.
-
-#### Adapting the focused border to window-edge colors
-
-Adaptive color is disabled by default. It provides two process-wide sampling
-modes. `active` keeps the high-contrast behavior and independently chooses
-pure black or pure white for each edge. `focus` combines the luminance from all
-usable edges and applies one color to the entire focused ring: `0xffe5484d`
-(#E5484D) when the window edge is bright overall, or `0xffe1e3e4` (#E1E3E4)
-when it is dark overall. The four edges never mix red and gray-white in
-`focus` mode. Inactive borders continue to use `inactive_color`.
-
-For a comfortable local focus ring, use:
+## Development and reference
 
 ```bash
-borders adaptive_color=focus active_color=0xffe5484d width=5.0
+make                   # Release build: bin/borders
+make warnings          # Strict compiler checks and service-script syntax check
+make test              # Regression tests
+make test-sanitize     # AddressSanitizer and UndefinedBehaviorSanitizer
+make test-thread       # ThreadSanitizer tests
 ```
 
-`adaptive_color` is a process-wide setting and cannot be combined with
-`apply-to=<window-id>`.
+The test suite covers parsing, configuration lookup and execution, window
+policy, geometry, focus/Space recovery, and animation/adaptive-color lifecycle.
+Passing tests does not establish visual compatibility with every app.
 
-Both sampling modes are event-driven: they run after focus, window creation or
-unhide, resize, and the final Space-recovery attempt. They intentionally do not
-capture continuously, so scrolling and video playback alone do not update the
-border. In `focus` mode, invalid edges are excluded and the remaining usable
-edges still produce one color for the whole ring. Once a consistent color has
-been established, a partial-edge sample cannot replace it; a different color
-must be confirmed by two complete successful samples. If no edge is usable or
-a capture or analysis temporarily fails, the ring keeps its previous consistent
-color until a later successful sample. Before the first successful sample, the
-entire ring falls back uniformly to `active_color`. A
-multi-edge `active_color` uses its first color for this fallback; a gradient uses
-its midpoint color. Losing screen-recording permission still disables sampling
-and returns to the configured fallback.
-
-Both sampling modes require macOS screen-recording permission. The user service
-never opens the permission prompt at login. Check or request permission
-explicitly after `make install-service`, then restart the service after
-granting it in System Settings. These Make targets deliberately execute the
-installed, stably signed app through LaunchServices rather than running the
-unsigned build output, so the permission belongs to the same identity used by
-the LaunchAgent:
-
-```bash
-make screen-capture-status
-make request-screen-capture
-make service-restart
-```
-
-#### Updating the border properties during runtime
-If a `borders` process is already running, invoking a new `borders` instance
-with any combination of the available options will update the properties of
-the already running instance.
-
-## Documentation
-Local documentation is available as `man borders` and as a rendered version in
-the [Wiki](https://github.com/FelixKratz/JankyBorders/wiki/Man-Page).
+- [Full option reference](docs/borders.1.scd), or `man ./docs/borders.1` from the checkout.
+- [Upstream audit](docs/upstream-audit.md): historical decisions and verification evidence; later commits supersede some entries.
+- [Fork issues](https://github.com/TYZRPVX/JankyBorders/issues).
+- [Upstream project](https://github.com/FelixKratz/JankyBorders).
+- [License](LICENSE): GPL-3.0.

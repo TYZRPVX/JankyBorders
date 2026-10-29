@@ -14,6 +14,7 @@ extern pid_t g_pid;
 extern volatile bool g_mission_control_active;
 
 static volatile uint64_t focus_change_generation;
+extern struct settings g_settings;
 static volatile bool space_transition_active;
 // SkyLight notifications are drained by the main CFRunLoop in main.c and all
 // delayed probes target the main dispatch queue, so this state is serialized.
@@ -109,9 +110,10 @@ static void event_watcher(uint32_t event, void* data, size_t data_length, void* 
 
 static bool is_own_window(int cid, uint32_t wid) {
   int wid_cid = 0;
-  SLSGetWindowOwner(cid, wid, &wid_cid);
+  if (SLSGetWindowOwner(cid, wid, &wid_cid) != kCGErrorSuccess
+      || wid_cid <= 0) return false;
   pid_t pid = 0;
-  SLSConnectionGetPID(wid_cid, &pid);
+  if (SLSConnectionGetPID(wid_cid, &pid) != kCGErrorSuccess) return false;
   return pid == g_pid;
 }
 
@@ -237,18 +239,21 @@ static void window_spawn_handler(uint32_t event,
          sizeof(wid));
   struct table* windows = &g_windows;
 
-  if (!wid || !sid || is_own_window(cid, wid)) return;
+  if (!wid) return;
+  // A destroyed window no longer has a queryable owner or current Space.
+  // Only target IDs are stored in g_windows; own helper IDs cannot match.
+  if (event == EVENT_WINDOW_DESTROY) {
+    if (windows_window_destroy(windows, wid, 0))
+      events_schedule_focus_refresh(true);
+    return;
+  }
+  if (!sid || is_own_window(cid, wid)) return;
 
   if (event == EVENT_WINDOW_CREATE) {
     events_mission_control_observe(cid, wid);
     if (windows_window_create(windows, wid, sid)) {
       debug("Window Created: %d %d\n", wid, sid);
       events_schedule_space_refresh();
-    }
-    events_schedule_focus_refresh(true);
-  } else if (event == EVENT_WINDOW_DESTROY) {
-    if (windows_window_destroy(windows, wid, sid)) {
-      debug("Window Destroyed: %d %d\n", wid, sid);
     }
     events_schedule_focus_refresh(true);
   }
@@ -265,6 +270,11 @@ static void window_modify_handler(uint32_t event,
   if (!wid) return;
   struct table* windows = &g_windows;
 
+  if (event == EVENT_WINDOW_CLOSE) {
+    if (windows_window_destroy(windows, wid, 0))
+      events_schedule_focus_refresh(true);
+    return;
+  }
   if (is_own_window(cid, wid)) return;
 
   if (event == EVENT_WINDOW_MOVE) {
@@ -273,6 +283,8 @@ static void window_modify_handler(uint32_t event,
   } else if (event == EVENT_WINDOW_RESIZE) {
     debug("Window Resize: %d\n", wid);
     windows_window_resize(windows, wid);
+    if (g_settings.min_width > 0 || g_settings.min_height > 0)
+      events_schedule_focus_refresh(false);
   } else if (event == EVENT_WINDOW_REORDER) {
     debug("Window Reorder (and focus): %d\n", wid);
     windows_window_update(windows, wid);
@@ -292,10 +304,6 @@ static void window_modify_handler(uint32_t event,
   } else if (event == EVENT_WINDOW_HIDE) {
     debug("Window Hide: %d\n", wid);
     windows_window_hide(windows, wid);
-    events_schedule_focus_refresh(true);
-  } else if (event == EVENT_WINDOW_CLOSE) {
-    debug("Window Close: %d\n", wid);
-    windows_window_destroy(windows, wid, 0);
     events_schedule_focus_refresh(true);
   }
 }

@@ -338,6 +338,14 @@ static void windows_adaptive_schedule_border(struct border* border,
   windows_adaptive_schedule_pump(serial, debounce_ms * ADAPTIVE_NS_PER_MS);
 }
 
+static uint32_t size_focus_watch;
+
+static void windows_watch_size_focus(struct table* windows, uint32_t wid) {
+  if (size_focus_watch == wid) return;
+  size_focus_watch = wid;
+  windows_update_notifications(windows);
+}
+
 // Loaded via dlsym in main.c
 extern CFArrayRef (*JBSLSWindowIteratorGetCornerRadii)(CFTypeRef);
 
@@ -657,7 +665,11 @@ static bool windows_window_focus(struct table* windows, uint32_t wid) {
         if (border != target && border->focused) {
           border->focused = false;
           windows_adaptive_invalidate_border(border, false);
-          if (!g_settings.active_only) {
+          if (g_settings.active_only) {
+            // Retire the old surface before close_observer_track performs AX IPC.
+            border_hide(border);
+            if (border->proxy) border_hide(border->proxy);
+          } else {
             border->needs_redraw = true;
             if (!border_update(border, true)) border_hide(border);
           }
@@ -706,6 +718,8 @@ void windows_window_unhide(struct table* windows, uint32_t wid) {
 }
 
 bool windows_window_destroy(struct table* windows, uint32_t wid, uint32_t sid) {
+  bool was_size_watch = wid && wid == size_focus_watch;
+  if (was_size_watch) windows_watch_size_focus(windows, 0);
   struct border* border = table_find(windows, &wid);
   if (border && (border->sid == sid || border->sticky || sid == 0)) {
     windows_adaptive_invalidate_border(border, true);
@@ -714,7 +728,7 @@ bool windows_window_destroy(struct table* windows, uint32_t wid, uint32_t sid) {
     windows_update_notifications(windows);
     return true;
   }
-  return false;
+  return was_size_watch;
 }
 
 void windows_update_notifications(struct table* windows) {
@@ -732,7 +746,9 @@ void windows_update_notifications(struct table* windows) {
     }
   }
 
-  if (window_count > SIZE_MAX / sizeof(uint32_t)) return;
+  bool extra_watch = size_focus_watch && !table_find(windows, &size_focus_watch);
+  if (extra_watch) ++window_count;
+  if (window_count > INT_MAX || window_count > SIZE_MAX / sizeof(uint32_t)) return;
   uint32_t* window_list = window_count
                           ? malloc(window_count * sizeof(uint32_t))
                           : NULL;
@@ -750,6 +766,7 @@ void windows_update_notifications(struct table* windows) {
     }
   }
 
+  if (extra_watch) window_list[index++] = size_focus_watch;
   int cid = SLSMainConnectionID();
   uint32_t empty_window = 0;
   SLSRequestNotificationsForWindows(cid,
@@ -771,6 +788,74 @@ static uint32_t windows_focused_window_id(struct table* windows) {
   return 0;
 }
 
+// Revalidate candidates on every resolution; never keep a different app's
+// border, a closed/minimized window, or a window on an invisible Space.
+static bool windows_size_fallback_candidate(int cid, uint32_t wid,
+                                             pid_t owner_pid,
+                                             bool require_document) {
+  if (!wid || windows_window_eligibility(cid, wid) != WINDOW_TRACKING_ALLOWED)
+    return false;
+  int owner = 0;
+  pid_t pid = 0;
+  bool shown = false;
+  CGRect bounds;
+  if (SLSGetWindowOwner(cid, wid, &owner) != kCGErrorSuccess
+      || SLSConnectionGetPID(owner, &pid) != kCGErrorSuccess || pid != owner_pid
+      || SLSWindowIsOrderedIn(cid, wid, &shown) != kCGErrorSuccess || !shown
+      || SLSGetWindowBounds(cid, wid, &bounds) != kCGErrorSuccess
+      || !window_policy_size_allowed(bounds.size.width, bounds.size.height,
+                                      g_settings.min_width, g_settings.min_height))
+    return false;
+  uint64_t tags = window_tags(cid, wid);
+  uint64_t sid = window_space_id(cid, wid);
+  if (!(tags & WINDOW_TAG_STICKY) && (!sid || !is_space_visible(cid, sid)))
+    return false;
+  if (require_document && !(tags & WINDOW_TAG_DOCUMENT)) return false;
+  CFArrayRef ids = cfarray_of_cfnumbers(&wid, sizeof(wid), 1, kCFNumberSInt32Type);
+  if (!ids) return false;
+  CFTypeRef query = SLSWindowQueryWindows(cid, ids, 0);
+  CFTypeRef iterator = query ? SLSWindowQueryResultCopyWindows(query) : NULL;
+  bool suitable = iterator && SLSWindowIteratorAdvance(iterator)
+                  && window_suitable(iterator);
+  if (iterator) CFRelease(iterator);
+  if (query) CFRelease(query);
+  CFRelease(ids);
+  return suitable;
+}
+
+static uint32_t windows_size_fallback(struct table* windows, int cid,
+                                      uint32_t actual_wid) {
+  int owner = 0;
+  pid_t pid = 0;
+  if (SLSGetWindowOwner(cid, actual_wid, &owner) != kCGErrorSuccess
+      || SLSConnectionGetPID(owner, &pid) != kCGErrorSuccess) return 0;
+  uint32_t previous = windows_focused_window_id(windows);
+  if (windows_size_fallback_candidate(cid, previous, pid, false)) return previous;
+  // CGWindowList is in front-to-back order and contains no window content.
+  CFArrayRef list = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly
+                                               | kCGWindowListExcludeDesktopElements,
+                                               kCGNullWindowID);
+  if (!list) return 0;
+  uint32_t selected = 0;
+  for (CFIndex i = 0; i < CFArrayGetCount(list); ++i) {
+    CFDictionaryRef info = CFArrayGetValueAtIndex(list, i);
+    CFNumberRef number = CFDictionaryGetValue(info, kCGWindowNumber);
+    CFNumberRef pid_number = CFDictionaryGetValue(info, kCGWindowOwnerPID);
+    int candidate_pid = 0;
+    uint32_t wid = 0;
+    if (!number || !pid_number) continue;
+    CFNumberGetValue(pid_number, kCFNumberIntType, &candidate_pid);
+    if (candidate_pid != pid) continue;
+    CFNumberGetValue(number, kCFNumberSInt32Type, &wid);
+    if (windows_size_fallback_candidate(cid, wid, pid, true)) {
+      selected = wid;
+      break;
+    }
+  }
+  CFRelease(list);
+  return selected;
+}
+
 static enum focus_recovery_resolution windows_focus_resolution_kind(
     enum front_window_resolution_status status) {
   switch (status) {
@@ -790,6 +875,22 @@ enum windows_focus_refresh_result windows_refresh_active_window(
     struct table* windows,
     bool allow_clear) {
   int cid = SLSMainConnectionID();
+  // Event-driven cleanup precedes AX focus queries and HOLD/retry decisions.
+  // A missing target must not keep its last rendered surface alive.
+  for (int i = 0; i < windows->capacity; ++i) {
+    for (struct bucket* bucket = windows->buckets[i]; bucket; bucket = bucket->next) {
+      struct border* border = bucket->value;
+      if (!border) continue;
+      bool shown = false;
+      CGRect bounds;
+      if (SLSWindowIsOrderedIn(cid, border->target_wid, &shown) != kCGErrorSuccess
+          || !shown
+          || SLSGetWindowBounds(cid, border->target_wid, &bounds) != kCGErrorSuccess) {
+        border_hide(border);
+        if (border->proxy) border_hide(border->proxy);
+      }
+    }
+  }
   struct front_window_resolution resolution = windows_resolve_front_window(cid);
 
   bool has_fallback_hint = resolution.status
@@ -835,6 +936,7 @@ enum windows_focus_refresh_result windows_refresh_active_window(
     enum window_tracking_eligibility eligibility =
         windows_window_eligibility(cid, front_wid);
     if (eligibility == WINDOW_TRACKING_REJECTED) {
+      windows_watch_size_focus(windows, 0);
       if (!allow_clear) return WINDOWS_FOCUS_REFRESH_HELD;
       windows_window_focus(windows, 0);
       windows_remove_all_except(windows, 0);
@@ -844,6 +946,29 @@ enum windows_focus_refresh_result windows_refresh_active_window(
     }
     if (eligibility == WINDOW_TRACKING_TRANSIENT) {
       return WINDOWS_FOCUS_REFRESH_HELD;
+    }
+
+    if (g_settings.min_width > 0 || g_settings.min_height > 0) {
+      CGRect bounds;
+      if (SLSGetWindowBounds(cid, front_wid, &bounds) != kCGErrorSuccess)
+        return WINDOWS_FOCUS_REFRESH_HELD;
+      if (!window_policy_size_allowed(bounds.size.width, bounds.size.height,
+                                      g_settings.min_width, g_settings.min_height)) {
+        windows_watch_size_focus(windows, front_wid);
+        struct border* small = table_find(windows, &front_wid);
+        if (small) border_hide(small);
+        front_wid = windows_size_fallback(windows, cid, front_wid);
+        if (!front_wid) {
+          windows_window_focus(windows, 0);
+          windows_remove_all_except(windows, 0);
+          focus_committed_front_cid = 0;
+          return WINDOWS_FOCUS_REFRESH_CLEARED;
+        }
+      } else {
+        windows_watch_size_focus(windows, 0);
+      }
+    } else {
+      windows_watch_size_focus(windows, 0);
     }
 
     struct border* target = table_find(windows, &front_wid);
@@ -876,6 +1001,7 @@ enum windows_focus_refresh_result windows_refresh_active_window(
   }
 
   if (decision == FOCUS_RECOVERY_CLEAR) {
+    windows_watch_size_focus(windows, 0);
     windows_window_focus(windows, 0);
     windows_remove_all_except(windows, 0);
     focus_committed_front_cid = 0;

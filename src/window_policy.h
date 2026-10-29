@@ -2,6 +2,7 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <math.h>
 
 #define WINDOW_TAG_DOCUMENT      (1ULL << 0)
 #define WINDOW_TAG_FLOATING      (1ULL << 1)
@@ -27,4 +28,11 @@ static inline bool window_policy_is_suitable(uint64_t tags,
   return (tags & WINDOW_TAG_FLOATING)
          && (tags & WINDOW_TAG_MODAL)
          && !(tags & WINDOW_TAG_IGNORES_CYCLE);
+}
+
+static inline bool window_policy_size_allowed(double width, double height,
+                                               double min_width,
+                                               double min_height) {
+  return isfinite(width) && isfinite(height) && width > 0 && height > 0
+         && width >= min_width && height >= min_height;
 }
