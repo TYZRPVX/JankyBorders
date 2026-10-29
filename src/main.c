@@ -148,6 +148,9 @@ static void message_handler(void* data, uint32_t len) {
                                   g_settings.adaptive_color);
   }
 
+  if (update_mask & BORDER_UPDATE_MASK_SIZE) {
+    events_schedule_space_refresh();
+  }
   if (update_mask & BORDER_UPDATE_MASK_RECREATE_ALL) {
     windows_recreate_all_borders(&g_windows);
     // Helper creation and Space assignment are asynchronous. Reuse the

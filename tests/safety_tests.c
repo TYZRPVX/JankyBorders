@@ -499,7 +499,29 @@ static void test_radius_defaults_and_overrides(void) {
   assert(parse_settings_scope_is_valid(2, targeted));
 }
 
+static void test_size_options(void) {
+  struct settings settings = {0};
+  char* args[] = { "min_width=600", "min_height=400" };
+  assert(parse_settings(&settings, 2, args) & BORDER_UPDATE_MASK_SIZE);
+  assert(settings.min_width == 600 && settings.min_height == 400);
+  char* bad[] = { "min_width=-1", "min_height=nan", "min_width=inf",
+                  "min_height=", "min_width=600px", "min_width=1e9999" };
+  for (size_t i=0; i<sizeof(bad)/sizeof(bad[0]); ++i)
+    assert(parse_settings(&settings, 1, &bad[i]) == 0);
+  assert(settings.min_width == 600 && settings.min_height == 400);
+  char* scoped[] = { "apply-to=42", "min_width=600" };
+  assert(!parse_settings_scope_is_valid(2, scoped));
+  scoped[1] = "min_height=400";
+  assert(!parse_settings_scope_is_valid(2, scoped));
+  char* off[] = { "min_width=0", "min_height=0" };
+  assert(parse_settings_override(&settings, 2, off) == 0);
+  assert(settings.min_width == 600 && settings.min_height == 400);
+  assert(parse_settings(&settings, 2, off) & BORDER_UPDATE_MASK_SIZE);
+  assert(settings.min_width == 0 && settings.min_height == 0);
+}
+
 int main(void) {
+  test_size_options();
   test_radius_defaults_and_overrides();
   test_argument_codec();
   test_outer_mach_validation();

@@ -14,6 +14,7 @@ extern pid_t g_pid;
 extern volatile bool g_mission_control_active;
 
 static volatile uint64_t focus_change_generation;
+extern struct settings g_settings;
 static volatile bool space_transition_active;
 // SkyLight notifications are drained by the main CFRunLoop in main.c and all
 // delayed probes target the main dispatch queue, so this state is serialized.
@@ -273,6 +274,8 @@ static void window_modify_handler(uint32_t event,
   } else if (event == EVENT_WINDOW_RESIZE) {
     debug("Window Resize: %d\n", wid);
     windows_window_resize(windows, wid);
+    if (g_settings.min_width > 0 || g_settings.min_height > 0)
+      events_schedule_focus_refresh(false);
   } else if (event == EVENT_WINDOW_REORDER) {
     debug("Window Reorder (and focus): %d\n", wid);
     windows_window_update(windows, wid);

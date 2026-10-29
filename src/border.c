@@ -134,8 +134,10 @@ static bool border_calculate_bounds(struct border* border, CGRect* frame, struct
   else if (SLSGetWindowBounds(border->cid,
                               border->target_wid,
                               &window_frame) != kCGErrorSuccess) {
+    border->size_filtered = false;
     return false;
   }
+  border->size_filtered = false;
   if (!isfinite(window_frame.origin.x)
       || !isfinite(window_frame.origin.y)
       || !isfinite(window_frame.size.width)
@@ -146,6 +148,14 @@ static bool border_calculate_bounds(struct border* border, CGRect* frame, struct
   }
 
   border->target_bounds = window_frame;
+  border->size_filtered = !window_policy_size_allowed(
+      window_frame.size.width, window_frame.size.height,
+      g_settings.min_width, g_settings.min_height);
+  if (border->size_filtered) {
+    border_hide(border);
+    if (border->proxy) border_hide(border->proxy);
+    return false;
+  }
   CGRect display_frame = settings->border_position == BORDER_POSITION_AUTO
                          ? border_display_frame(window_frame)
                          : CGRectNull;
@@ -515,7 +525,9 @@ bool border_update_internal(struct border* border, struct settings* settings) {
   int cid = border->cid;
   bool update_succeeded = false;
   CGRect frame;
-  if (!border_calculate_bounds(border, &frame, settings)) return false;
+  if (!border_calculate_bounds(border, &frame, settings)) {
+    return border->size_filtered;
+  }
 
   uint64_t tags = window_tags(cid, border->target_wid);
   border->sticky = tags & WINDOW_TAG_STICKY;
@@ -788,6 +800,8 @@ void border_hide(struct border* border) {
 }
 
 void border_unhide(struct border* border) {
+  // Re-read bounds and global size policy before any helper can be shown.
+  if (!border_update(border, true)) return;
   pthread_mutex_lock(&border->mutex);
   (void)border_refresh_space(border, false);
   struct settings* settings = border_get_settings(border);
@@ -795,6 +809,7 @@ void border_unhide(struct border* border) {
       || g_mission_control_active
       || border->closing
       || border->too_small
+      || border->size_filtered
       || border->external_proxy_wid
       || (!border->sticky && !is_space_visible(border->cid, border->sid))) {
     pthread_mutex_unlock(&border->mutex);

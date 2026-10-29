@@ -63,6 +63,8 @@ struct settings {
   struct color_style background;
 
   float border_width;
+  float min_width;
+  float min_height;
   float border_radius;
   bool border_radius_override;
   float blur_radius;
@@ -96,6 +98,7 @@ struct border {
   bool focused;
   bool needs_redraw;
   bool too_small;
+  bool size_filtered;
   bool sticky;
   // Set when the application reports the window destroyed, which precedes
   // the WindowServer close animation and the SkyLight close notifications.
